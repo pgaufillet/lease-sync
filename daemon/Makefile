@@ -29,7 +29,7 @@ CFLAGS += -DSTATEDIR=\"$(STATEDIR)\"
 INCLUDES = -I. -I/usr/local/include
 
 # Libraries
-LDFLAGS += -pthread -L/usr/local/lib
+LDFLAGS += -L/usr/local/lib
 LIBS = -lubus -lubox -lssl -lcrypto
 
 # Installation directories

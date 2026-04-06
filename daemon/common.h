@@ -270,7 +270,6 @@ struct daemon_state
   uint16_t message_sequence;
 
   /* Running state */
-  volatile bool running;
   time_t start_time;
 
   /* Startup reconciliation */
@@ -331,7 +330,6 @@ int ubus_handler_init(struct daemon_state *state);
 void ubus_handler_cleanup(void);
 int ubus_handler_inject_lease(struct lease_entry *entry);
 int ubus_handler_delete_lease(const char *ip);
-void ubus_handler_process_events(void);
 
 /* Callback type for iterating dnsmasq leases */
 typedef void (*lease_enum_callback_t)(const char *ip, const char *mac,

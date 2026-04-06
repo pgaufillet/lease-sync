@@ -12,7 +12,6 @@
 #
 # Prerequisites:
 #   - GCC or compatible C compiler
-#   - pthread library (usually built-in)
 #
 # This test links against daemon/lease-db.c and daemon/util.c.
 
@@ -53,7 +52,6 @@ echo "Building test_lease_db (linking daemon/lease-db.c, util.c, log.c)..."
 $CC -o "$BUILD_DIR/test_lease_db" \
     -Wall -Wextra -Wno-comment -std=gnu99 \
     -I../daemon \
-    -pthread \
     test_lease_db.c \
     test_framework.c \
     ../daemon/lease-db.c \

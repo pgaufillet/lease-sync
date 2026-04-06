@@ -33,7 +33,7 @@
 #include <errno.h>
 #include <getopt.h>
 #include <fcntl.h>
-#include <sys/select.h>
+#include <libubox/uloop.h>
 #include <libubus.h>
 
 #include "common.h"
@@ -42,29 +42,16 @@
 /* Global daemon state */
 struct daemon_state *g_state = NULL;
 
-static void signal_handler(int sig)
-{
-  if (g_state)
-    {
-      log_info("Received signal %d, shutting down...", sig);
-      g_state->running = false;
-    }
-}
+/* uloop file descriptor for UDP sync socket */
+static struct uloop_fd sync_uloop_fd;
 
-static void setup_signals(void)
-{
-  struct sigaction sa;
-
-  memset(&sa, 0, sizeof(sa));
-  sa.sa_handler = signal_handler;
-  sigemptyset(&sa.sa_mask);
-
-  sigaction(SIGINT, &sa, NULL);
-  sigaction(SIGTERM, &sa, NULL);
-
-  /* Ignore SIGPIPE */
-  signal(SIGPIPE, SIG_IGN);
-}
+/* uloop timers */
+static struct uloop_timeout heartbeat_timer;
+static struct uloop_timeout sync_request_timer;
+static struct uloop_timeout peer_check_timer;
+static struct uloop_timeout retry_timer;
+static struct uloop_timeout stats_timer;
+static struct uloop_timeout reconcile_timer;
 
 static void print_usage(const char *prog)
 {
@@ -80,51 +67,6 @@ static void print_usage(const char *prog)
   printf("Signals:\n");
   printf("  SIGTERM, SIGINT        Graceful shutdown\n");
   printf("\n");
-}
-
-static int daemonize(void)
-{
-  pid_t pid = fork();
-
-  if (pid < 0)
-    {
-      fprintf(stderr, "Fork failed: %s\n", strerror(errno));
-      return -1;
-    }
-
-  if (pid > 0)
-    {
-      /* Parent process - exit */
-      exit(0);
-    }
-
-  /* Child process continues */
-
-  /* Create new session */
-  if (setsid() < 0)
-    {
-      fprintf(stderr, "setsid() failed: %s\n", strerror(errno));
-      return -1;
-    }
-
-  /* Change working directory to root */
-  if (chdir("/") < 0)
-    {
-      fprintf(stderr, "chdir() failed: %s\n", strerror(errno));
-      return -1;
-    }
-
-  /* Close standard file descriptors */
-  close(STDIN_FILENO);
-  close(STDOUT_FILENO);
-  close(STDERR_FILENO);
-
-  /* Reopen to /dev/null */
-  if (open("/dev/null", O_RDONLY) != STDIN_FILENO) return -1;
-  if (open("/dev/null", O_WRONLY) != STDOUT_FILENO) return -1;
-  if (open("/dev/null", O_WRONLY) != STDERR_FILENO) return -1;
-
-  return 0;
 }
 
 static int daemon_init(const char *config_file)
@@ -188,7 +130,6 @@ static int daemon_init(const char *config_file)
       return -1;
     }
 
-  g_state->running = true;
   g_state->start_time = time(NULL);
   g_state->message_sequence = 0;
 
@@ -418,149 +359,126 @@ static int startup_reconcile_leases(void)
   return deleted;
 }
 
+/* uloop callback: UDP sync socket is readable */
+static void sync_socket_cb(struct uloop_fd *fd, unsigned int events)
+{
+  (void)events;
+
+  if (fd->fd >= 0)
+    peer_sync_handle_message(g_state);
+}
+
+/* uloop timer callbacks */
+static void heartbeat_cb(struct uloop_timeout *t)
+{
+  peer_sync_send_heartbeat();
+  uloop_timeout_set(t, 30 * 1000);
+}
+
+static void sync_request_cb(struct uloop_timeout *t)
+{
+  if (g_state->config.sync_interval > 0)
+    {
+      peer_sync_request_full_sync();
+      uloop_timeout_set(t, g_state->config.sync_interval * 1000);
+    }
+}
+
+static void peer_check_cb(struct uloop_timeout *t)
+{
+  peer_sync_update_status();
+  uloop_timeout_set(t, 10 * 1000);
+}
+
+static void retry_cb(struct uloop_timeout *t)
+{
+  if (retry_queue_count() > 0)
+    retry_queue_process();
+  uloop_timeout_set(t, RETRY_INTERVAL_SECONDS * 1000);
+}
+
+static void stats_cb(struct uloop_timeout *t)
+{
+  log_info("Statistics: leases=%d (local=%d, peer=%d), "
+           "added=%llu, updated=%llu, deleted=%llu, "
+           "sent=%llu, recv=%llu, conflicts=%llu, "
+           "retry_queue=%d, retries=%llu, drops=%llu, reconciled=%llu",
+           g_state->lease_count,
+           g_state->local_lease_count,
+           g_state->peer_lease_count,
+           (unsigned long long)g_state->total_leases_added,
+           (unsigned long long)g_state->total_leases_updated,
+           (unsigned long long)g_state->total_leases_deleted,
+           (unsigned long long)g_state->total_sync_messages_sent,
+           (unsigned long long)g_state->total_sync_messages_received,
+           (unsigned long long)g_state->total_conflicts_resolved,
+           retry_queue_count(),
+           (unsigned long long)g_state->total_injection_retries,
+           (unsigned long long)g_state->total_injection_drops,
+           (unsigned long long)g_state->total_leases_reconciled);
+  uloop_timeout_set(t, 300 * 1000);
+}
+
+/* One-shot: startup reconciliation after sync wait */
+static void reconcile_cb(struct uloop_timeout *t)
+{
+  (void)t;
+
+  if (g_state->startup_phase == STARTUP_PHASE_SYNC_REQUESTED)
+    {
+      g_state->startup_phase = STARTUP_PHASE_RECONCILING;
+      startup_reconcile_leases();
+    }
+}
+
 static void main_loop(void)
 {
-  time_t last_heartbeat = 0;
-  time_t last_sync_request = 0;
-  time_t last_peer_check = 0;
-  time_t last_stats = 0;
-
   log_info("Entering main event loop");
 
   /* Request full sync from peers on startup */
   peer_sync_request_full_sync();
-  last_sync_request = time(NULL);
 
   /* Initialize startup reconciliation phase tracking */
   g_state->startup_phase = STARTUP_PHASE_SYNC_REQUESTED;
   g_state->startup_sync_request_time = time(NULL);
 
-  while (g_state->running)
+  /* Register UDP sync socket with uloop */
+  if (g_state->config.sync_socket >= 0)
     {
-      time_t now = time(NULL);
-      fd_set readfds;
-      struct timeval tv;
-      int max_fd = 0;
-      int ret;
-
-      FD_ZERO(&readfds);
-
-      /* Add sync socket */
-      if (g_state->config.sync_socket >= 0)
-        {
-          FD_SET(g_state->config.sync_socket, &readfds);
-          max_fd = g_state->config.sync_socket;
-        }
-
-      /* Add ubus fd */
-      if (g_state->ubus_ctx)
-        {
-          int ufd = g_state->ubus_ctx->sock.fd;
-          FD_SET(ufd, &readfds);
-          if (ufd > max_fd)
-            max_fd = ufd;
-        }
-
-      /* Timeout for periodic tasks (1 second) */
-      tv.tv_sec = 1;
-      tv.tv_usec = 0;
-
-      ret = select(max_fd + 1, &readfds, NULL, NULL, &tv);
-
-      if (ret < 0)
-        {
-          if (errno == EINTR)
-            continue;  /* Signal received */
-
-          log_error("select() failed: %s", strerror(errno));
-          break;
-        }
-
-      /* Handle sync socket */
-      if (ret > 0 && g_state->config.sync_socket >= 0 &&
-          FD_ISSET(g_state->config.sync_socket, &readfds))
-        {
-          peer_sync_handle_message(g_state);
-        }
-
-      /* Handle ubus events */
-      if (ret > 0 && g_state->ubus_ctx)
-        {
-          int ufd = g_state->ubus_ctx->sock.fd;
-          if (FD_ISSET(ufd, &readfds))
-            {
-              ubus_handler_process_events();
-            }
-        }
-
-      /* Periodic: Send heartbeat to peers */
-      if (now - last_heartbeat >= 30)
-        {
-          peer_sync_send_heartbeat();
-          last_heartbeat = now;
-        }
-
-      /* Periodic: Request full sync */
-      if (g_state->config.sync_interval > 0 &&
-          now - last_sync_request >= g_state->config.sync_interval)
-        {
-          peer_sync_request_full_sync();
-          last_sync_request = now;
-        }
-
-      /* Periodic: Check peer status */
-      if (now - last_peer_check >= 10)
-        {
-          peer_sync_update_status();
-          last_peer_check = now;
-        }
-
-      /* Periodic: Process retry queue */
-      {
-        static time_t last_retry_process = 0;
-        if (now - last_retry_process >= RETRY_INTERVAL_SECONDS)
-          {
-            if (retry_queue_count() > 0)
-              {
-                retry_queue_process();
-              }
-            last_retry_process = now;
-          }
-      }
-
-      /* One-time: Startup reconciliation
-       * After waiting for sync responses, compare dnsmasq state with lease_db
-       * and delete any stale leases from dnsmasq */
-      if (g_state->startup_phase == STARTUP_PHASE_SYNC_REQUESTED &&
-          now - g_state->startup_sync_request_time >= STARTUP_SYNC_WAIT_SECONDS)
-        {
-          g_state->startup_phase = STARTUP_PHASE_RECONCILING;
-          startup_reconcile_leases();
-        }
-
-      /* Periodic: Log statistics */
-      if (now - last_stats >= 300)    /* Every 5 minutes */
-        {
-          log_info("Statistics: leases=%d (local=%d, peer=%d), "
-                   "added=%llu, updated=%llu, deleted=%llu, "
-                   "sent=%llu, recv=%llu, conflicts=%llu, "
-                   "retry_queue=%d, retries=%llu, drops=%llu, reconciled=%llu",
-                   g_state->lease_count,
-                   g_state->local_lease_count,
-                   g_state->peer_lease_count,
-                   (unsigned long long)g_state->total_leases_added,
-                   (unsigned long long)g_state->total_leases_updated,
-                   (unsigned long long)g_state->total_leases_deleted,
-                   (unsigned long long)g_state->total_sync_messages_sent,
-                   (unsigned long long)g_state->total_sync_messages_received,
-                   (unsigned long long)g_state->total_conflicts_resolved,
-                   retry_queue_count(),
-                   (unsigned long long)g_state->total_injection_retries,
-                   (unsigned long long)g_state->total_injection_drops,
-                   (unsigned long long)g_state->total_leases_reconciled);
-          last_stats = now;
-        }
+      sync_uloop_fd.fd = g_state->config.sync_socket;
+      sync_uloop_fd.cb = sync_socket_cb;
+      uloop_fd_add(&sync_uloop_fd, ULOOP_READ);
     }
+
+  /* Register ubus with uloop */
+  if (g_state->ubus_ctx)
+    ubus_add_uloop(g_state->ubus_ctx);
+
+  /* Arm periodic timers */
+  heartbeat_timer.cb = heartbeat_cb;
+  uloop_timeout_set(&heartbeat_timer, 30 * 1000);
+
+  if (g_state->config.sync_interval > 0)
+    {
+      sync_request_timer.cb = sync_request_cb;
+      uloop_timeout_set(&sync_request_timer, g_state->config.sync_interval * 1000);
+    }
+
+  peer_check_timer.cb = peer_check_cb;
+  uloop_timeout_set(&peer_check_timer, 10 * 1000);
+
+  retry_timer.cb = retry_cb;
+  uloop_timeout_set(&retry_timer, RETRY_INTERVAL_SECONDS * 1000);
+
+  stats_timer.cb = stats_cb;
+  uloop_timeout_set(&stats_timer, 300 * 1000);
+
+  /* One-shot: startup reconciliation after STARTUP_SYNC_WAIT_SECONDS */
+  reconcile_timer.cb = reconcile_cb;
+  uloop_timeout_set(&reconcile_timer, STARTUP_SYNC_WAIT_SECONDS * 1000);
+
+  /* Run event loop (handles SIGTERM/SIGINT) */
+  uloop_run();
 
   log_info("Exiting main event loop");
 }
@@ -609,14 +527,15 @@ int main(int argc, char *argv[])
         }
     }
 
-  /* Setup signal handlers */
-  setup_signals();
+  /* Initialize uloop */
+  uloop_init();
 
   /* Initialize daemon (loads config - log calls go to stderr before log_init) */
   if (daemon_init(config_file) < 0)
     {
       log_error("Daemon initialization failed");
       daemon_cleanup();
+      uloop_done();
       return 1;
     }
 
@@ -633,23 +552,12 @@ int main(int argc, char *argv[])
 
   log_info("Starting lease-sync daemon v%s", LEASE_SYNC_VERSION);
 
-  /* Daemonize if requested */
-  if (!foreground && g_state->config.daemon_mode)
-    {
-      log_info("Daemonizing...");
-      if (daemonize() < 0)
-        {
-          log_error("Failed to daemonize");
-          daemon_cleanup();
-          return 1;
-        }
-    }
-
-  /* Run main loop */
+  /* Run main loop (uloop handles signals and event dispatch) */
   main_loop();
 
   /* Cleanup */
   daemon_cleanup();
+  uloop_done();
 
   log_info("lease-sync daemon terminated");
 

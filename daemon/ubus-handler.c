@@ -516,11 +516,4 @@ int ubus_handler_get_leases(lease_enum_callback_t callback, void *user_data)
   return ctx.count;
 }
 
-void ubus_handler_process_events(void)
-{
-  if (!g_state || !g_state->ubus_ctx)
-    return;
-
-  /* Process pending ubus events */
-  ubus_handle_event(g_state->ubus_ctx);
-}
+/* ubus event processing is handled by ubus_add_uloop() in the main loop */

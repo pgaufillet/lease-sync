@@ -14,21 +14,18 @@
 /*
  * lease-db.c - In-memory lease database implementation
  *
- * Uses a hash table with chaining for O(1) average case lookups
+ * Uses a hash table with chaining for O(1) average case lookups.
+ * Single-threaded: all access is from the uloop event loop.
  */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <pthread.h>
 
 #include "common.h"
 
 /* Global state (defined in main) */
 extern struct daemon_state *g_state;
-
-/* Read-write lock for thread-safe access */
-static pthread_rwlock_t db_lock = PTHREAD_RWLOCK_INITIALIZER;
 
 static uint32_t hash_ip(const char *ip)
 {
@@ -67,8 +64,6 @@ void lease_db_cleanup(void)
   if (!g_state)
     return;
 
-  pthread_rwlock_wrlock(&db_lock);
-
   /* Free all lease entries */
   for (i = 0; i < HASH_TABLE_SIZE; i++)
     {
@@ -86,8 +81,6 @@ void lease_db_cleanup(void)
   g_state->local_lease_count = 0;
   g_state->peer_lease_count = 0;
 
-  pthread_rwlock_unlock(&db_lock);
-
   log_info("Lease database cleaned up");
 }
 
@@ -99,22 +92,16 @@ struct lease_entry *lease_db_find(const char *ip)
   if (!g_state || !ip)
     return NULL;
 
-  pthread_rwlock_rdlock(&db_lock);
-
   index = hash_ip(ip);
   entry = g_state->lease_table[index];
 
   while (entry)
     {
       if (strcmp(entry->ip_str, ip) == 0)
-        {
-          pthread_rwlock_unlock(&db_lock);
-          return entry;
-        }
+        return entry;
       entry = entry->next;
     }
 
-  pthread_rwlock_unlock(&db_lock);
   return NULL;
 }
 
@@ -130,8 +117,6 @@ int lease_db_add(struct lease_entry *new_entry)
       return -1;
     }
 
-  pthread_rwlock_wrlock(&db_lock);
-
   index = hash_ip(new_entry->ip_str);
 
   /* Check if entry already exists */
@@ -142,7 +127,6 @@ int lease_db_add(struct lease_entry *new_entry)
       if (strcmp(entry->ip_str, new_entry->ip_str) == 0)
         {
           /* Entry exists - this is an update, not add */
-          pthread_rwlock_unlock(&db_lock);
           log_warning("lease_db_add: lease %s already exists, use update instead",
                       new_entry->ip_str);
           return lease_db_update(new_entry);
@@ -154,7 +138,6 @@ int lease_db_add(struct lease_entry *new_entry)
   copy = malloc(sizeof(struct lease_entry));
   if (!copy)
     {
-      pthread_rwlock_unlock(&db_lock);
       log_error("lease_db_add: failed to allocate memory");
       return -1;
     }
@@ -173,8 +156,6 @@ int lease_db_add(struct lease_entry *new_entry)
 
   g_state->total_leases_added++;
 
-  pthread_rwlock_unlock(&db_lock);
-
   log_debug("Added lease: %s (%s) from node %s",
             copy->ip_str, copy->hostname, copy->source_node);
 
@@ -192,8 +173,6 @@ int lease_db_update(struct lease_entry *new_entry)
       return -1;
     }
 
-  pthread_rwlock_wrlock(&db_lock);
-
   index = hash_ip(new_entry->ip_str);
   entry = g_state->lease_table[index];
 
@@ -208,7 +187,6 @@ int lease_db_update(struct lease_entry *new_entry)
           /* Conflict resolution: newer timestamp wins */
           if (new_entry->timestamp_ms <= entry->timestamp_ms)
             {
-              pthread_rwlock_unlock(&db_lock);
               log_debug("Ignoring older lease update for %s (local: %llu, remote: %llu)",
                         new_entry->ip_str,
                         (unsigned long long)entry->timestamp_ms,
@@ -247,8 +225,6 @@ int lease_db_update(struct lease_entry *new_entry)
 
           g_state->total_leases_updated++;
 
-          pthread_rwlock_unlock(&db_lock);
-
           log_debug("Updated lease: %s (%s) from node %s",
                     entry->ip_str, entry->hostname, entry->source_node);
 
@@ -256,8 +232,6 @@ int lease_db_update(struct lease_entry *new_entry)
         }
       entry = entry->next;
     }
-
-  pthread_rwlock_unlock(&db_lock);
 
   /* Entry not found - add it */
   log_debug("lease_db_update: lease %s not found, adding instead", new_entry->ip_str);
@@ -275,8 +249,6 @@ int lease_db_delete(const char *ip)
       log_error("lease_db_delete: invalid parameters");
       return -1;
     }
-
-  pthread_rwlock_wrlock(&db_lock);
 
   index = hash_ip(ip);
   entry = g_state->lease_table[index];
@@ -303,14 +275,11 @@ int lease_db_delete(const char *ip)
           log_debug("Deleted lease: %s (%s)", entry->ip_str, entry->hostname);
 
           free(entry);
-          pthread_rwlock_unlock(&db_lock);
           return 0;
         }
       prev = entry;
       entry = entry->next;
     }
-
-  pthread_rwlock_unlock(&db_lock);
 
   log_debug("lease_db_delete: lease %s not found", ip);
   return -1;  /* Not found */
@@ -318,16 +287,10 @@ int lease_db_delete(const char *ip)
 
 int lease_db_count(void)
 {
-  int count;
-
   if (!g_state)
     return 0;
 
-  pthread_rwlock_rdlock(&db_lock);
-  count = g_state->lease_count;
-  pthread_rwlock_unlock(&db_lock);
-
-  return count;
+  return g_state->lease_count;
 }
 
 void lease_db_foreach(void (*callback)(struct lease_entry *entry, void *user_data), void *user_data)
@@ -336,8 +299,6 @@ void lease_db_foreach(void (*callback)(struct lease_entry *entry, void *user_dat
 
   if (!g_state || !callback)
     return;
-
-  pthread_rwlock_rdlock(&db_lock);
 
   for (i = 0; i < HASH_TABLE_SIZE; i++)
     {
@@ -348,8 +309,6 @@ void lease_db_foreach(void (*callback)(struct lease_entry *entry, void *user_dat
           entry = entry->next;
         }
     }
-
-  pthread_rwlock_unlock(&db_lock);
 }
 
 static void print_lease_callback(struct lease_entry *entry, void *user_data)
