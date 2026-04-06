@@ -1,0 +1,3 @@
+*.o
+lease-sync
+tests/.build-*

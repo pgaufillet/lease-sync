@@ -1,0 +1,182 @@
+# lease-sync daemon configuration
+# DHCP Lease Synchronization for dnsmasq HA
+#
+# Installation:
+#   mkdir -p /etc/lease-sync
+#   cp lease-sync.conf.example /etc/lease-sync/config
+#   vi /etc/lease-sync/config
+#   /usr/sbin/lease-sync
+
+# ============================================
+# Node Identification
+# ============================================
+
+# Unique node identifier for this instance
+# If not specified or file doesn't exist, will be auto-generated
+# and saved to node_id_file
+# node_id=node1
+
+# ============================================
+# Peer Configuration
+# ============================================
+
+# List of peer nodes to synchronize with
+# Specify one peer per line
+# Supports both IPv4 and IPv6 addresses
+#
+# Example for 2-node HA cluster:
+peer=192.168.1.10
+# peer=192.168.1.11
+
+# Example for 3-node cluster:
+# peer=192.168.1.10
+# peer=192.168.1.11
+# peer=192.168.1.12
+
+# IPv6 example:
+# peer=fd00::10
+# peer=fd00::11
+
+# ============================================
+# Network Configuration
+# ============================================
+
+# UDP port for peer synchronization
+# All nodes must use the same port
+# Default: 5378
+sync_port=5378
+
+# Bind address for outgoing sync traffic (optional)
+# If not set, binds to all interfaces (0.0.0.0 or ::)
+# Use this to explicitly select which IP address to use for sync traffic
+# Useful when you have multiple interfaces and want to avoid using the VIP
+# Supports both IPv4 and IPv6 addresses
+# Default: empty (bind to all interfaces)
+#bind_address=192.168.1.10
+#bind_address=fd00::10
+
+# ============================================
+# Timing Configuration
+# ============================================
+
+# Interval for periodic full sync requests (seconds)
+# Set to 0 to disable periodic full sync
+# Default: 30
+sync_interval=30
+
+# Interval for persisting leases to disk (seconds)
+# Set to 0 to disable persistence
+# Default: 60
+persist_interval=60
+
+# Peer timeout (seconds)
+# Peer is considered down if no message received within this period
+# Default: 120
+peer_timeout=120
+
+# ============================================
+# Storage Configuration
+# ============================================
+
+# Path to lease database file
+# Default: /var/lib/lease-sync/leases.db (or /etc/lease-sync/leases.db on OpenWrt)
+persist_file=/var/lib/lease-sync/leases.db
+
+# Path to node ID file
+# Default: /var/lib/lease-sync/node_id (or /etc/lease-sync/node_id on OpenWrt)
+node_id_file=/var/lib/lease-sync/node_id
+
+# ============================================
+# Logging Configuration
+# ============================================
+
+# Enable debug mode (verbose logging to stderr)
+# Log level
+# 0 = ERROR only
+# 1 = WARNING and above (warnings and errors)
+# 2 = INFO and above (default - normal operations)
+# 3 = DEBUG (verbose, all messages)
+# Default: 2
+log_level=2
+
+# Legacy option (deprecated, use log_level instead)
+# debug=1 is equivalent to log_level=3
+#debug=0
+
+# ============================================
+# Example Configurations
+# ============================================
+
+# --- Simple 2-Node HA ---
+# Node 1 (192.168.1.10):
+#   peer=192.168.1.11
+#   sync_port=5378
+#
+# Node 2 (192.168.1.11):
+#   peer=192.168.1.10
+#   sync_port=5378
+
+# --- 3-Node HA Cluster ---
+# Each node lists all other nodes as peers
+# Node 1: peer=192.168.1.11, peer=192.168.1.12
+# Node 2: peer=192.168.1.10, peer=192.168.1.12
+# Node 3: peer=192.168.1.10, peer=192.168.1.11
+
+# --- Aggressive Sync (Low Latency) ---
+# sync_interval=10
+# peer_timeout=30
+# Faster detection of peer failures and sync
+
+# --- Conservative Sync (Low Bandwidth) ---
+# sync_interval=300
+# peer_timeout=600
+# Reduces network traffic, slower failover detection
+
+# ============================================
+# Security Configuration
+# ============================================
+
+# Security mode (REQUIRED - choose one):
+#
+#   encrypted - Use built-in AES-256-GCM PSK encryption (RECOMMENDED)
+#               Requires: psk_key=<64-character hex key>
+#
+#   plain     - No built-in encryption (requires explicit acknowledgment)
+#               Use ONLY with network-layer security (WireGuard/IPsec)
+#
+# Default: encrypted (secure by default, like owsync)
+security_mode=encrypted
+
+# Pre-shared key for encrypted mode (REQUIRED for security_mode=encrypted)
+# 64 hexadecimal characters (256-bit key)
+# Generate with: head -c 32 /dev/urandom | xxd -p -c 32
+# IMPORTANT: Same key must be configured on all peer nodes!
+psk_key=
+
+# --- Alternative: Plain mode with WireGuard/IPsec ---
+# Uncomment these two lines if using network-layer security instead:
+# security_mode=plain
+# plain_mode_acknowledged=1
+
+# ============================================
+# Security Notes
+# ============================================
+
+# The daemon is "secure by default":
+#   - Uses AES-256-GCM authenticated encryption
+#   - Refuses to start without encryption key or explicit plain mode
+#   - Logs prominent warnings when running unencrypted
+#
+# For encrypted mode (RECOMMENDED):
+#   - Generate a 256-bit key: head -c 32 /dev/urandom | xxd -p -c 32
+#   - Copy the same key to all peer nodes
+#   - Set security_mode=encrypted and psk_key=<key>
+#
+# For plain mode (with VPN):
+#   - Configure WireGuard tunnels between all peers
+#     See: SECURITY.md for configuration guide
+#   - OR use IPsec tunnels with ESP encryption
+#   - Set security_mode=plain and plain_mode_acknowledged=1
+#   - Firewall rules restricting UDP sync_port to peer IPs only
+#
+# NEVER expose sync_port (5378/UDP) to untrusted networks without encryption!

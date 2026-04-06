@@ -1,0 +1,166 @@
+# Example dnsmasq configuration for High Availability setup
+# This configuration works with dhcp-script-ha.sh and lease-sync daemon
+#
+# Installation:
+#   cp dnsmasq-ha.conf.example /etc/dnsmasq.d/ha.conf
+#   /etc/init.d/dnsmasq restart
+
+# ============================================
+# Basic DHCP Configuration
+# ============================================
+
+# Enable DHCP server
+dhcp-range=192.168.1.50,192.168.1.200,12h
+
+# Set the domain for dnsmasq
+domain=lan
+
+# Set authoritative mode (recommended for HA to prevent delays)
+dhcp-authoritative
+
+# ============================================
+# High Availability Configuration
+# ============================================
+
+# DHCP event script for lease synchronization
+# This script publishes lease events to ubus for the lease-sync daemon
+dhcp-script=/usr/lib/dnsmasq/dhcp-script-ha.sh
+
+# Optional: Run script as non-root user (recommended for security)
+# dhcp-scriptuser=nobody
+
+# Optional: Enable script on lease renewals and expiry changes
+# Useful for keeping peer nodes updated on lease extensions
+# script-on-renewal
+
+# ============================================
+# Optional: Read-only Lease File Mode
+# ============================================
+
+# Uncomment for advanced setups where lease-sync daemon manages the lease database
+# In this mode:
+#   - dnsmasq does NOT write to lease file
+#   - Script receives "init" call on startup and should output leases
+#   - lease-sync daemon is responsible for lease persistence
+#
+# leasefile-ro
+
+# ============================================
+# DHCPv6 Configuration (if using IPv6)
+# ============================================
+
+# Enable DHCPv6
+# dhcp-range=::100,::1ff,constructor:br-lan,ra-stateless,12h
+
+# Enable Router Advertisement
+# enable-ra
+
+# ============================================
+# DNS Configuration
+# ============================================
+
+# Don't read /etc/hosts
+# no-hosts
+
+# Don't read /etc/resolv.conf
+# no-resolv
+
+# Upstream DNS servers
+server=8.8.8.8
+server=8.8.4.4
+
+# Expand simple names (add domain suffix)
+expand-hosts
+
+# Set the size of dnsmasq's cache
+cache-size=1000
+
+# ============================================
+# Logging (useful for debugging)
+# ============================================
+
+# Log lots of extra information about DHCP transactions
+# log-dhcp
+
+# Log queries
+# log-queries
+
+# Log to specific file (default is syslog)
+# log-facility=/var/log/dnsmasq.log
+
+# ============================================
+# ubus Integration
+# ============================================
+
+# Enable ubus support (required for lease-sync)
+# This is typically compiled in on OpenWrt
+# enable-ubus
+
+# Optional: Set ubus service name
+# ubus-name=dnsmasq
+
+# ============================================
+# Static DHCP Leases
+# ============================================
+
+# Example static leases
+# These will be automatically synced to peer nodes
+# dhcp-host=aa:bb:cc:dd:ee:ff,192.168.1.10,server1,infinite
+# dhcp-host=11:22:33:44:55:66,192.168.1.11,server2,infinite
+
+# ============================================
+# DHCP Options
+# ============================================
+
+# Router (default gateway)
+dhcp-option=3,192.168.1.1
+
+# DNS server (point to this dnsmasq instance)
+dhcp-option=6,192.168.1.1
+
+# NTP server
+# dhcp-option=42,192.168.1.1
+
+# Domain name
+dhcp-option=15,lan
+
+# ============================================
+# Advanced Options
+# ============================================
+
+# Ignore DHCP requests from unknown hosts (strict security)
+# dhcp-ignore=tag:!known
+
+# Bind only to specific interfaces (security)
+interface=br-lan
+
+# Don't bind to wildcard addresses
+bind-interfaces
+
+# Enable rapid commit (2-message exchange instead of 4)
+# dhcp-rapid-commit
+
+# ============================================
+# HA-Specific Tuning
+# ============================================
+
+# Reduce lease time for faster failover detection
+# For production HA, consider shorter leases (e.g., 1h instead of 12h)
+# dhcp-range=192.168.1.50,192.168.1.200,1h
+
+# Increase DHCP authoritative mode aggressiveness
+# Helps with faster lease takeover on failover
+dhcp-authoritative
+
+# Ignore requests for unknown leases (let peer handle them)
+# This prevents both nodes from responding to the same DISCOVER
+# Note: Only use this if you have proper load balancing configured
+# dhcp-ignore=tag:!known
+
+# ============================================
+# Monitoring and Metrics
+# ============================================
+
+# Enable metrics collection (for monitoring via ubus)
+# Available via: ubus call dnsmasq metrics
+# (Enabled by default in OpenWrt builds)

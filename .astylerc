@@ -1,0 +1,53 @@
+# Astyle configuration for lease-sync
+# Matches dnsmasq upstream coding style
+#
+# Usage:
+#   astyle --options=.astylerc daemon/*.c daemon/*.h
+#
+# Verify before committing:
+#   git diff
+
+# GNU brace style: braces on next line, indented half-level
+# Produces:
+#   if (ret)
+#     {
+#       do_something();
+#     }
+--style=gnu
+
+# 2-space indent using spaces (dnsmasq mixes tabs/spaces at deeper
+# levels but spaces-only is cleaner and visually identical)
+--indent=spaces=2
+
+# switch/case: case at same level as braces (GNU default)
+# Do NOT use --indent-switches
+
+# Pointer star attached to variable name: char *p
+--align-pointer=name
+
+# Space after if/for/while keyword
+--pad-header
+
+# Spaces around operators: a = b + c
+--pad-oper
+
+# No space inside parentheses
+--unpad-paren
+
+# Don't force braces on single-line if/for (dnsmasq uses both)
+# --add-braces  (intentionally omitted)
+
+# Don't break one-line statements
+--keep-one-line-statements
+
+# Don't break one-line blocks
+--keep-one-line-blocks
+
+# Use LF line endings
+--lineend=linux
+
+# Process .c and .h files
+--suffix=none
+
+# Don't create backup files (use git instead)
+--suffix=none
