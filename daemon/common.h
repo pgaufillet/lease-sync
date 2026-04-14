@@ -25,7 +25,7 @@
 /* Forward declaration for encryption context */
 struct security_context;
 
-#define LEASE_SYNC_VERSION "1.1.0"
+#define LEASE_SYNC_VERSION "1.2.0"
 #define LEASE_SYNC_PROTOCOL_VERSION 1
 
 #define MAX_PEERS 10
@@ -38,7 +38,6 @@ struct security_context;
 
 #define DEFAULT_SYNC_PORT 5378
 #define DEFAULT_SYNC_INTERVAL 30
-#define DEFAULT_PERSIST_INTERVAL 60
 #define DEFAULT_PEER_TIMEOUT 120
 
 /* Maximum encrypted message size: struct sync_message + crypto overhead (28 bytes) */
@@ -220,11 +219,9 @@ struct config
 
   /* Timing */
   int sync_interval;                      /* Periodic full sync interval (seconds) */
-  int persist_interval;                   /* Disk write interval (seconds) */
   int peer_timeout;                       /* Peer considered down after (seconds) */
 
   /* Paths */
-  char persist_file[256];
   char node_id_file[256];
 
   /* Flags */
@@ -356,8 +353,8 @@ int config_ensure_directories(struct config *config);
 uint64_t get_timestamp_ms(void);
 uint32_t hash_string(const char *str);
 int parse_ip_address(const char *str, int *af_family, void *addr);
-const char *format_mac(const unsigned char *mac, int len, char *buf);
-int parse_mac(const char *str, unsigned char *mac, int *len);
+const char *format_mac(const unsigned char *mac, int len, char *buf, size_t bufsz);
+int parse_mac(const char *str, unsigned char *mac, size_t max_len, int *len);
 bool is_seen_message(uint16_t sequence, const char *node_id);
 void mark_message_seen(uint16_t sequence, const char *node_id);
 char *trim_whitespace(char *str);

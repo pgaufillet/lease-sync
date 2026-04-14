@@ -107,12 +107,6 @@ void test_config_set_defaults(void)
         TEST_FAIL("Default sync_interval set", "wrong value");
     }
 
-    if (config.persist_interval == DEFAULT_PERSIST_INTERVAL) {
-        TEST_PASS("Default persist_interval set");
-    } else {
-        TEST_FAIL("Default persist_interval set", "wrong value");
-    }
-
     if (config.peer_timeout == DEFAULT_PEER_TIMEOUT) {
         TEST_PASS("Default peer_timeout set");
     } else {
@@ -168,7 +162,8 @@ void test_config_load_valid(void)
     struct config config;
     config_set_defaults(&config);
 
-    /* Write a test config file */
+    /* Write a test config file. Includes legacy persist_interval/persist_file
+     * lines to verify the parser silently ignores keys removed in v1.2.0. */
     write_config_file(
         "# Test configuration\n"
         "node_id=test-node-123\n"
@@ -177,6 +172,7 @@ void test_config_load_valid(void)
         "sync_port=6000\n"
         "sync_interval=45\n"
         "persist_interval=90\n"
+        "persist_file=/tmp/legacy.db\n"
         "peer_timeout=180\n"
         "debug=1\n"
         "log_level=3\n"
@@ -205,12 +201,6 @@ void test_config_load_valid(void)
         TEST_PASS("sync_interval parsed correctly");
     } else {
         TEST_FAIL("sync_interval parsed correctly", "wrong value");
-    }
-
-    if (config.persist_interval == 90) {
-        TEST_PASS("persist_interval parsed correctly");
-    } else {
-        TEST_FAIL("persist_interval parsed correctly", "wrong value");
     }
 
     if (config.peer_timeout == 180) {
@@ -580,9 +570,7 @@ void test_config_ensure_directories(void)
     struct config config;
     config_set_defaults(&config);
 
-    /* Set paths to test directories */
-    snprintf(config.persist_file, sizeof(config.persist_file),
-             "%s/subdir/leases.db", test_dir);
+    /* Set node_id_file to a path that requires a parent directory */
     snprintf(config.node_id_file, sizeof(config.node_id_file),
              "%s/subdir/node_id", test_dir);
 
@@ -778,6 +766,61 @@ void test_config_peer_source_address(void)
 }
 
 /* ============================================
+ * Test: Over-long peer address
+ * ============================================
+ *
+ * Feeds a peer= line whose value exceeds INET6_ADDRSTRLEN. Before the fix,
+ * config_add_peer's `peer_addr` stack buffer was uninitialized, so an
+ * over-long value would leak stack contents into peer->address (and into
+ * the "Invalid peer address" log line) when strncpy did not NUL-terminate.
+ *
+ * Expected post-fix behavior:
+ *   - parser does not crash
+ *   - the malformed entry is rejected (peer_count stays 0)
+ */
+void test_config_peer_overlong_address(void)
+{
+    printf("\n=== Test: Over-long peer address ===\n");
+
+    reset_state();
+    setup_test_dir();
+
+    char config_file[512];
+    snprintf(config_file, sizeof(config_file), "%s/config", test_dir);
+
+    /* INET6_ADDRSTRLEN is 46. Build a 200-char garbage value that is
+     * neither a valid IPv4 nor IPv6 address. */
+    char overlong[256];
+    memset(overlong, 'A', 200);
+    overlong[200] = '\0';
+
+    FILE *f = fopen(config_file, "w");
+    fprintf(f, "node_id=test-node\n");
+    fprintf(f, "peer=%s\n", overlong);
+    fclose(f);
+
+    struct config config;
+    config_set_defaults(&config);
+
+    int ret = config_load(&config, config_file);
+    if (ret == 0) {
+        TEST_PASS("config_load tolerates over-long peer (no crash)");
+    } else {
+        TEST_FAIL("config_load tolerates over-long peer", "returned error");
+    }
+
+    if (config.peer_count == 0) {
+        TEST_PASS("Over-long peer rejected (peer_count = 0)");
+    } else {
+        char msg[64];
+        snprintf(msg, sizeof(msg), "expected 0, got %d", config.peer_count);
+        TEST_FAIL("Over-long peer rejected", msg);
+    }
+
+    cleanup_test_dir();
+}
+
+/* ============================================
  * Main Test Runner
  * ============================================ */
 int main(void)
@@ -799,6 +842,7 @@ int main(void)
     test_config_ensure_directories();
     test_config_load_null();
     test_config_peer_source_address();
+    test_config_peer_overlong_address();
 
     return print_test_summary();
 }

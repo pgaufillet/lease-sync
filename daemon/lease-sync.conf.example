@@ -64,11 +64,6 @@ sync_port=5378
 # Default: 30
 sync_interval=30
 
-# Interval for persisting leases to disk (seconds)
-# Set to 0 to disable persistence
-# Default: 60
-persist_interval=60
-
 # Peer timeout (seconds)
 # Peer is considered down if no message received within this period
 # Default: 120
@@ -77,10 +72,11 @@ peer_timeout=120
 # ============================================
 # Storage Configuration
 # ============================================
-
-# Path to lease database file
-# Default: /var/lib/lease-sync/leases.db (or /etc/lease-sync/leases.db on OpenWrt)
-persist_file=/var/lib/lease-sync/leases.db
+#
+# NOTE: lease-sync keeps the replicated lease database in memory only.
+# After a daemon restart, state is rebuilt from peers via SYNC_REQUEST.
+# If all peers restart simultaneously, replicated state is lost until new
+# DHCP events occur. (Disk persistence may return in a future version.)
 
 # Path to node ID file
 # Default: /var/lib/lease-sync/node_id (or /etc/lease-sync/node_id on OpenWrt)

@@ -65,14 +65,19 @@ int parse_ip_address(const char *str, int *af_family, void *addr)
   return -1;  /* Invalid */
 }
 
-const char *format_mac(const unsigned char *mac, int len, char *buf)
+const char *format_mac(const unsigned char *mac, int len, char *buf, size_t bufsz)
 {
-  int i, pos;
+  int i;
+  size_t pos;
 
-  if (!mac || !buf || len <= 0)
+  if (!mac || !buf || len <= 0 || bufsz == 0)
     return NULL;
 
-  if (len == 6)
+  /* Need at least 3 bytes per input byte (two hex digits + separator/NUL). */
+  if (bufsz < (size_t)(len * 3))
+    return NULL;
+
+  if (len == 6 && bufsz >= 18)
     {
       /* Standard Ethernet MAC */
       snprintf(buf, 18, "%02x:%02x:%02x:%02x:%02x:%02x",
@@ -80,12 +85,15 @@ const char *format_mac(const unsigned char *mac, int len, char *buf)
     }
   else
     {
-      /* Generic hex dump */
+      /* Generic hex dump, bounded by bufsz */
       pos = 0;
-      for (i = 0; i < len && pos < 50; i++)
+      for (i = 0; i < len; i++)
         {
-          pos += snprintf(buf + pos, 50 - pos, "%02x", mac[i]);
-          if (i < len - 1 && pos < 49)
+          int n = snprintf(buf + pos, bufsz - pos, "%02x", mac[i]);
+          if (n < 0 || (size_t)n >= bufsz - pos)
+            break;
+          pos += (size_t)n;
+          if (i < len - 1 && pos + 1 < bufsz)
             buf[pos++] = ':';
         }
       buf[pos] = '\0';
@@ -94,19 +102,19 @@ const char *format_mac(const unsigned char *mac, int len, char *buf)
   return buf;
 }
 
-int parse_mac(const char *str, unsigned char *mac, int *len)
+int parse_mac(const char *str, unsigned char *mac, size_t max_len, int *len)
 {
   int count = 0;
   const char *p;
   unsigned int byte;
 
-  if (!str || !mac || !len)
+  if (!str || !mac || !len || max_len == 0)
     return -1;
 
   /* Support formats: aa:bb:cc:dd:ee:ff or aabbccddeeff */
   p = str;
 
-  while (*p && count < 32)
+  while (*p && (size_t)count < max_len)
     {
       if (sscanf(p, "%2x", &byte) != 1)
         break;

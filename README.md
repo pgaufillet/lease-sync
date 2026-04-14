@@ -107,7 +107,6 @@ head -c 32 /dev/urandom | xxd -p -c 32
 
 ```
   -c, --config FILE      Configuration file
-  -f, --foreground       Run in foreground
   -d, --debug            Enable debug logging
   -v, --version          Print version
   -h, --help             Print help

@@ -204,7 +204,7 @@ void test_format_mac(void)
     unsigned char mac[6] = {0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff};
 
     /* Test standard 6-byte MAC */
-    const char *result = format_mac(mac, 6, buf);
+    const char *result = format_mac(mac, 6, buf, sizeof(buf));
     if (result && strcmp(result, "aa:bb:cc:dd:ee:ff") == 0) {
         TEST_PASS("Standard MAC formatting");
     } else {
@@ -214,7 +214,7 @@ void test_format_mac(void)
     }
 
     /* Test NULL MAC */
-    result = format_mac(NULL, 6, buf);
+    result = format_mac(NULL, 6, buf, sizeof(buf));
     if (result == NULL) {
         TEST_PASS("NULL MAC returns NULL");
     } else {
@@ -222,7 +222,7 @@ void test_format_mac(void)
     }
 
     /* Test NULL buffer */
-    result = format_mac(mac, 6, NULL);
+    result = format_mac(mac, 6, NULL, 0);
     if (result == NULL) {
         TEST_PASS("NULL buffer returns NULL");
     } else {
@@ -230,11 +230,50 @@ void test_format_mac(void)
     }
 
     /* Test zero length */
-    result = format_mac(mac, 0, buf);
+    result = format_mac(mac, 0, buf, sizeof(buf));
     if (result == NULL) {
         TEST_PASS("Zero length returns NULL");
     } else {
         TEST_FAIL("Zero length returns NULL", "should return NULL");
+    }
+
+    /* Long client_id (DUID-EN style, 20 bytes) must NOT be truncated when
+     * the output buffer is large enough. Pre-fix format_mac silently capped
+     * at 50 chars (~16 bytes) regardless of buffer size. */
+    {
+        unsigned char duid[20];
+        char big_buf[MAX_CLIENT_ID_LEN * 3];
+        int i;
+
+        for (i = 0; i < 20; i++)
+            duid[i] = (unsigned char)(0x10 + i);
+
+        result = format_mac(duid, 20, big_buf, sizeof(big_buf));
+        /* 20 bytes -> "10:11:12:...:23" = 20 * 2 hex + 19 colons = 59 chars */
+        if (result && strlen(result) == 59 &&
+            strncmp(result, "10:11:12:13:14:15:16:17:18:19:1a:1b:1c:1d:1e:1f:20:21:22:23", 60) == 0) {
+            TEST_PASS("format_mac: 20-byte client_id formatted in full (59 chars)");
+        } else {
+            char msg[128];
+            snprintf(msg, sizeof(msg), "got len=%zu '%s'",
+                     result ? strlen(result) : 0, result ? result : "NULL");
+            TEST_FAIL("format_mac: 20-byte client_id formatted in full", msg);
+        }
+    }
+
+    /* Undersized output buffer must be rejected, not truncated. */
+    {
+        unsigned char duid[10];
+        char small_buf[16]; /* less than 10*3 = 30 needed */
+        memset(duid, 0xab, sizeof(duid));
+
+        result = format_mac(duid, 10, small_buf, sizeof(small_buf));
+        if (result == NULL) {
+            TEST_PASS("format_mac: undersized output buffer rejected");
+        } else {
+            TEST_FAIL("format_mac: undersized output buffer rejected",
+                      "format_mac returned non-NULL for too-small buffer");
+        }
     }
 }
 
@@ -247,11 +286,11 @@ void test_parse_mac(void)
 
     reset_state();
 
-    unsigned char mac[32];
+    unsigned char mac[MAX_CLIENT_ID_LEN];
     int len;
 
     /* Test colon-separated format */
-    if (parse_mac("aa:bb:cc:dd:ee:ff", mac, &len) == 0 && len == 6 &&
+    if (parse_mac("aa:bb:cc:dd:ee:ff", mac, sizeof(mac), &len) == 0 && len == 6 &&
         mac[0] == 0xaa && mac[1] == 0xbb && mac[5] == 0xff) {
         TEST_PASS("Colon-separated MAC parsing");
     } else {
@@ -259,7 +298,7 @@ void test_parse_mac(void)
     }
 
     /* Test dash-separated format */
-    if (parse_mac("11-22-33-44-55-66", mac, &len) == 0 && len == 6 &&
+    if (parse_mac("11-22-33-44-55-66", mac, sizeof(mac), &len) == 0 && len == 6 &&
         mac[0] == 0x11 && mac[5] == 0x66) {
         TEST_PASS("Dash-separated MAC parsing");
     } else {
@@ -267,7 +306,7 @@ void test_parse_mac(void)
     }
 
     /* Test no-separator format */
-    if (parse_mac("aabbccddeeff", mac, &len) == 0 && len == 6 &&
+    if (parse_mac("aabbccddeeff", mac, sizeof(mac), &len) == 0 && len == 6 &&
         mac[0] == 0xaa && mac[5] == 0xff) {
         TEST_PASS("No-separator MAC parsing");
     } else {
@@ -275,10 +314,63 @@ void test_parse_mac(void)
     }
 
     /* Test NULL string */
-    if (parse_mac(NULL, mac, &len) != 0) {
+    if (parse_mac(NULL, mac, sizeof(mac), &len) != 0) {
         TEST_PASS("NULL string rejected");
     } else {
         TEST_FAIL("NULL string rejected", "should have failed");
+    }
+
+    /* Long client_id (40 bytes) must be parsed in full when max_len permits.
+     * Pre-fix parse_mac hard-capped at 32 bytes regardless of caller buffer
+     * size. */
+    {
+        char hex[256];
+        int i;
+        int rc;
+
+        for (i = 0; i < 40; i++)
+            snprintf(hex + i * 3, sizeof(hex) - i * 3,
+                     i < 39 ? "%02x:" : "%02x", 0x40 + i);
+
+        rc = parse_mac(hex, mac, sizeof(mac), &len);
+        if (rc == 0 && len == 40 &&
+            mac[0] == 0x40 && mac[39] == 0x67) {
+            TEST_PASS("parse_mac: 40-byte client_id parsed in full");
+        } else {
+            char msg[128];
+            snprintf(msg, sizeof(msg), "rc=%d len=%d", rc, len);
+            TEST_FAIL("parse_mac: 40-byte client_id parsed in full", msg);
+        }
+    }
+
+    /* Caller-provided max_len must be respected. */
+    {
+        unsigned char small[8];
+        int rc = parse_mac("01:02:03:04:05:06:07:08:09:0a:0b:0c", small, sizeof(small), &len);
+        if (rc == 0 && len == 8 && small[7] == 0x08) {
+            TEST_PASS("parse_mac: stops at max_len boundary");
+        } else {
+            char msg[64];
+            snprintf(msg, sizeof(msg), "rc=%d len=%d", rc, len);
+            TEST_FAIL("parse_mac: stops at max_len boundary", msg);
+        }
+    }
+
+    /* Round trip: parse a 20-byte hex string and reformat it; result must
+     * equal the original (case-insensitive). Catches regression where either
+     * side silently truncates a real DUID. */
+    {
+        const char *original = "00:01:02:03:04:05:06:07:08:09:0a:0b:0c:0d:0e:0f:10:11:12:13";
+        unsigned char parsed[MAX_CLIENT_ID_LEN];
+        char reformatted[MAX_CLIENT_ID_LEN * 3];
+
+        if (parse_mac(original, parsed, sizeof(parsed), &len) == 0 && len == 20 &&
+            format_mac(parsed, len, reformatted, sizeof(reformatted)) != NULL &&
+            strcmp(reformatted, original) == 0) {
+            TEST_PASS("parse_mac/format_mac: 20-byte client_id round trip preserves all bytes");
+        } else {
+            TEST_FAIL("parse_mac/format_mac: 20-byte client_id round trip", reformatted);
+        }
     }
 }
 

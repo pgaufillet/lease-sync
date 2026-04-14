@@ -30,7 +30,6 @@ start_service() {
 
 sync_port=5378
 sync_interval=30
-persist_interval=60
 peer_timeout=120
 log_level=2
 EOF

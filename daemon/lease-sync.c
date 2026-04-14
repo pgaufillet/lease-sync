@@ -59,7 +59,6 @@ static void print_usage(const char *prog)
   printf("Usage: %s [options]\n\n", prog);
   printf("Options:\n");
   printf("  -c, --config FILE      Configuration file (default: /etc/lease-sync/config)\n");
-  printf("  -f, --foreground       Run in foreground (don't daemonize)\n");
   printf("  -d, --debug            Enable debug logging\n");
   printf("  -v, --version          Print version and exit\n");
   printf("  -h, --help             Print this help message\n");
@@ -486,30 +485,28 @@ static void main_loop(void)
 int main(int argc, char *argv[])
 {
   const char *config_file = "/etc/lease-sync/config";
-  bool foreground = false;
   bool debug = false;
   int opt;
 
-  /* Parse command line arguments */
+  /* Parse command line arguments.
+   * Daemonization (fork/setsid/stdio redirect) is the supervisor's job
+   * (procd/systemd); lease-sync always runs in the foreground of its
+   * supervising process and logs to syslog. */
   static struct option long_options[] =
   {
     {"config",     required_argument, 0, 'c'},
-    {"foreground", no_argument,       0, 'f'},
     {"debug",      no_argument,       0, 'd'},
     {"version",    no_argument,       0, 'v'},
     {"help",       no_argument,       0, 'h'},
     {0, 0, 0, 0}
   };
 
-  while ((opt = getopt_long(argc, argv, "c:fdvh", long_options, NULL)) != -1)
+  while ((opt = getopt_long(argc, argv, "c:dvh", long_options, NULL)) != -1)
     {
       switch (opt)
         {
         case 'c':
           config_file = optarg;
-          break;
-        case 'f':
-          foreground = true;
           break;
         case 'd':
           debug = true;
@@ -546,9 +543,7 @@ int main(int argc, char *argv[])
     }
 
   /* Initialize logging module with final config */
-  log_init("lease-sync",
-           foreground ? LOG_MODE_FOREGROUND : LOG_MODE_DAEMON,
-           g_state->config.log_level);
+  log_init("lease-sync", LOG_MODE_DAEMON, g_state->config.log_level);
 
   log_info("Starting lease-sync daemon v%s", LEASE_SYNC_VERSION);
 

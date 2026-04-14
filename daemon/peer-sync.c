@@ -619,6 +619,10 @@ void peer_sync_handle_message(struct daemon_state *state)
       memcpy(&msg, recv_buf, sizeof(struct sync_message));
     }
 
+  /* Wire-format node_id is a fixed-size field; guarantee NUL-termination
+   * before any string operation (strcmp, %s, strncpy) downstream. */
+  msg.node_id[MAX_NODE_ID_LEN - 1] = '\0';
+
   /* Validate magic */
   if (ntohl(msg.magic) != SYNC_MAGIC)
     {

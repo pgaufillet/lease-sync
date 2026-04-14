@@ -181,7 +181,7 @@ static void handle_lease_event(struct ubus_context *ctx, struct ubus_event_handl
           unsigned char clid_buf[MAX_CLIENT_ID_LEN];
 
           /* Parse hex string (format: "01:23:45:67:...") */
-          parse_mac(clid_str, clid_buf, &clid_len);
+          parse_mac(clid_str, clid_buf, sizeof(clid_buf), &clid_len);
           if (clid_len > 0)
             {
               memcpy(entry.client_id, clid_buf, clid_len);
@@ -314,15 +314,15 @@ int ubus_handler_inject_lease(struct lease_entry *entry)
         blobmsg_add_u8(&b, "is_temporary", 1);
     }
 
-  /* Client ID (convert to hex string) */
+  /* Client ID (convert to hex string).
+   * Sized for "xx:" per byte plus terminator: enough for MAX_CLIENT_ID_LEN bytes. */
   if (entry->client_id_len > 0)
     {
       char clid_str[MAX_CLIENT_ID_LEN * 3];
-      char mac_buf[64];
 
-      format_mac(entry->client_id, entry->client_id_len, mac_buf);
-      strncpy(clid_str, mac_buf, sizeof(clid_str) - 1);
-      blobmsg_add_string(&b, "client_id", clid_str);
+      if (format_mac(entry->client_id, entry->client_id_len,
+                     clid_str, sizeof(clid_str)))
+        blobmsg_add_string(&b, "client_id", clid_str);
     }
 
   /* Call dnsmasq.add_lease */

@@ -20,9 +20,7 @@
  *   peer=192.168.1.11
  *   sync_port=5378
  *   sync_interval=30
- *   persist_interval=60
  *   peer_timeout=120
- *   persist_file=/var/lib/lease-sync/leases.db
  *   debug=1
  */
 
@@ -55,14 +53,12 @@ void config_set_defaults(struct config *config)
 
   /* Timing defaults */
   config->sync_interval = DEFAULT_SYNC_INTERVAL;
-  config->persist_interval = DEFAULT_PERSIST_INTERVAL;
   config->peer_timeout = DEFAULT_PEER_TIMEOUT;
 
   /* Paths - use compile-time STATEDIR (defaults to /var/lib/lease-sync) */
 #ifndef STATEDIR
 #define STATEDIR "/var/lib/lease-sync"
 #endif
-  snprintf(config->persist_file, sizeof(config->persist_file), "%s/leases.db", STATEDIR);
   snprintf(config->node_id_file, sizeof(config->node_id_file), "%s/node_id", STATEDIR);
 
   /* Flags */
@@ -176,6 +172,7 @@ static int config_add_peer(struct config *config, const char *value)
   memset(peer, 0, sizeof(struct peer_info));
 
   /* Parse format "peer_address[,source_address]" */
+  memset(peer_addr, 0, sizeof(peer_addr));
   memset(source_addr, 0, sizeof(source_addr));
   comma = strchr(value, ',');
 
@@ -335,21 +332,11 @@ int config_load(struct config *config, const char *config_file)
           if (parse_int(value, &interval) == 0 && interval > 0)
             config->sync_interval = interval;
         }
-      else if (strcmp(key, "persist_interval") == 0)
-        {
-          int interval;
-          if (parse_int(value, &interval) == 0 && interval > 0)
-            config->persist_interval = interval;
-        }
       else if (strcmp(key, "peer_timeout") == 0)
         {
           int timeout;
           if (parse_int(value, &timeout) == 0 && timeout > 0)
             config->peer_timeout = timeout;
-        }
-      else if (strcmp(key, "persist_file") == 0)
-        {
-          strncpy(config->persist_file, value, sizeof(config->persist_file) - 1);
         }
       else if (strcmp(key, "node_id_file") == 0)
         {
@@ -441,11 +428,9 @@ int config_save(struct config *config, const char *config_file)
 
   fprintf(f, "sync_port=%d\n", config->sync_port);
   fprintf(f, "sync_interval=%d\n", config->sync_interval);
-  fprintf(f, "persist_interval=%d\n", config->persist_interval);
   fprintf(f, "peer_timeout=%d\n", config->peer_timeout);
   fprintf(f, "\n");
 
-  fprintf(f, "persist_file=%s\n", config->persist_file);
   fprintf(f, "node_id_file=%s\n", config->node_id_file);
   fprintf(f, "\n");
 
@@ -466,24 +451,9 @@ int config_ensure_directories(struct config *config)
   if (!config)
     return -1;
 
-  /* Extract directory from persist_file */
-  strncpy(dir, config->persist_file, sizeof(dir) - 1);
-
-  last_slash = strrchr(dir, '/');
-  if (last_slash)
-    {
-      *last_slash = '\0';
-
-      /* Create directory if it doesn't exist */
-      if (mkdir(dir, 0755) < 0 && errno != EEXIST)
-        {
-          log_error("Failed to create directory %s: %s", dir, strerror(errno));
-          return -1;
-        }
-    }
-
   /* Extract directory from node_id_file */
   strncpy(dir, config->node_id_file, sizeof(dir) - 1);
+  dir[sizeof(dir) - 1] = '\0';
   last_slash = strrchr(dir, '/');
   if (last_slash)
     {
