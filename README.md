@@ -300,6 +300,7 @@ Unit tests cover the daemon's core modules:
 | `run-config-tests.sh` | Configuration parsing |
 | `run-lease-db-tests.sh` | Lease database |
 | `run-peer-sync-tests.sh` | Peer sync protocol |
+| `run-sync-flow-tests.sh` | Lease flow between dnsmasq, the lease database and a peer (fake dnsmasq, loopback peer) |
 
 **Prerequisites:** GCC, OpenSSL development libraries (`apt-get install build-essential libssl-dev` on Debian/Ubuntu).
 

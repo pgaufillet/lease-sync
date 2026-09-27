@@ -127,9 +127,9 @@ log.o: log.c log.h
 # Testing
 # ============================================
 
-.PHONY: test test-crypto test-retry-queue test-util test-config test-lease-db test-all
+.PHONY: test test-crypto test-retry-queue test-util test-config test-lease-db test-sync-flow test-all
 
-test: test-crypto test-retry-queue test-util test-config test-lease-db
+test: test-crypto test-retry-queue test-util test-config test-lease-db test-sync-flow
 	@echo ""
 	@echo "All unit tests passed"
 
@@ -147,6 +147,9 @@ test-config:
 
 test-lease-db:
 	cd ../tests && ./run-lease-db-tests.sh
+
+test-sync-flow:
+	cd ../tests && ./run-sync-flow-tests.sh
 
 # Run all tests including integration tests (if on OpenWrt)
 test-all:

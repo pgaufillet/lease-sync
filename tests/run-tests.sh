@@ -57,6 +57,7 @@ show_help() {
     echo "  - Utility function tests (if available)"
     echo "  - Config parsing tests (if available)"
     echo "  - Lease database tests (if available)"
+    echo "  - Sync flow tests (if available)"
     echo ""
     echo "OpenWrt integration tests (require ubus and dnsmasq):"
     echo "  - DHCP script tests"
@@ -171,6 +172,9 @@ if [ "$RUN_UNIT_TESTS" -eq 1 ]; then
         fi
         if [ -x "./run-lease-db-tests.sh" ]; then
             run_test_suite "Lease Database Tests" "./run-lease-db-tests.sh" "no" || true
+        fi
+        if [ -x "./run-sync-flow-tests.sh" ]; then
+            run_test_suite "Sync Flow Tests" "./run-sync-flow-tests.sh" "no" || true
         fi
     else
         echo "No C compiler found (gcc, clang, cc) - skipping unit tests"

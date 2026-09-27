@@ -5,6 +5,27 @@ All notable changes to lease-sync are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Correctness**: deleting a lease that dnsmasq does not hold now counts as
+  success. Previously `delete_lease` answering "not found" (a peer `DELETE`
+  for a lease this node never had or already removed) was treated as an
+  injection failure: the deletion was queued and retried by IP address
+  for about 15 seconds (3 attempts, 5 seconds apart). A retry could delete
+  a lease dnsmasq had given out again for that address in the meantime,
+  and that deletion was broadcast to the peers. Otherwise the deletion was
+  counted as a drop.
+
+### Validated
+- New sync flow suite (`tests/run-sync-flow-tests.sh`) runs the daemon's
+  startup reconciliation, dnsmasq event handling and peer message handling
+  against a fake dnsmasq and a peer on loopback UDP. Each fix above has
+  regression tests there that fail on v1.2.0.
+
+### Notes
+- Wire protocol is unchanged (`LEASE_SYNC_PROTOCOL_VERSION = 1`).
+
 ## [1.2.0] - 2026-04-14
 
 ### Fixed
@@ -108,6 +129,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Unit test suite (227 tests across config, crypto, lease-db, peer-sync, util).
 - Integration test suite (T01-T05) covering end-to-end synchronization.
 
+[Unreleased]: https://github.com/pgaufillet/lease-sync/compare/v1.2.0...HEAD
 [1.2.0]: https://github.com/pgaufillet/lease-sync/releases/tag/v1.2.0
 [1.1.0]: https://github.com/pgaufillet/lease-sync/releases/tag/v1.1.0
 [1.0.0]: https://github.com/pgaufillet/lease-sync/releases/tag/v1.0.0

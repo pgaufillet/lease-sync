@@ -366,6 +366,13 @@ int ubus_handler_delete_lease(const char *ip)
   ret = ubus_invoke(g_state->ubus_ctx, id, "delete_lease", b.head, NULL, NULL, 3000);
   blob_buf_free(&b);
 
+  /* Already absent from dnsmasq: the requested state is reached */
+  if (ret == UBUS_STATUS_NOT_FOUND)
+    {
+      log_debug("Lease %s not in dnsmasq, nothing to delete", ip);
+      return 0;
+    }
+
   if (ret)
     {
       log_error("Failed to delete lease %s: %s", ip, ubus_strerror(ret));
