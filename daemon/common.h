@@ -25,7 +25,7 @@
 /* Forward declaration for encryption context */
 struct security_context;
 
-#define LEASE_SYNC_VERSION "1.2.0"
+#define LEASE_SYNC_VERSION "1.2.1"
 #define LEASE_SYNC_PROTOCOL_VERSION 1
 
 #define MAX_PEERS 10

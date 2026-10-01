@@ -5,7 +5,7 @@ All notable changes to lease-sync are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.2.1] - 2026-10-02
 
 ### Fixed
 - **Correctness**: deleting a lease that dnsmasq does not hold now counts as
@@ -40,7 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   regression tests there that fail on v1.2.0.
 
 ### Notes
-- Wire protocol is unchanged (`LEASE_SYNC_PROTOCOL_VERSION = 1`).
+- Wire protocol is unchanged (`LEASE_SYNC_PROTOCOL_VERSION = 1`). v1.0.0
+  to v1.2.1 nodes interoperate.
+- Update every node: a v1.2.0 node still deletes the leases no peer
+  reported when its lease-sync restarts, and broadcasts the deletions to
+  the peers.
 
 ## [1.2.0] - 2026-04-14
 
@@ -146,7 +150,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Unit test suite (227 tests across config, crypto, lease-db, peer-sync, util).
 - Integration test suite (T01-T05) covering end-to-end synchronization.
 
-[Unreleased]: https://github.com/pgaufillet/lease-sync/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/pgaufillet/lease-sync/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/pgaufillet/lease-sync/releases/tag/v1.2.1
 [1.2.0]: https://github.com/pgaufillet/lease-sync/releases/tag/v1.2.0
 [1.1.0]: https://github.com/pgaufillet/lease-sync/releases/tag/v1.1.0
 [1.0.0]: https://github.com/pgaufillet/lease-sync/releases/tag/v1.0.0
