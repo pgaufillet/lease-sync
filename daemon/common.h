@@ -68,7 +68,7 @@ struct security_context;
 #define RETRY_ACTION_ADD 1
 #define RETRY_ACTION_DELETE 2
 
-/* Startup Reconciliation Constants */
+/* Startup Constants */
 #define STARTUP_SYNC_WAIT_SECONDS 5
 
 /* Startup Phase Tracking */
@@ -76,8 +76,7 @@ enum startup_phase
 {
   STARTUP_PHASE_INIT = 0,           /* Initial state, daemon starting */
   STARTUP_PHASE_SYNC_REQUESTED = 1, /* Full sync requested from peers */
-  STARTUP_PHASE_RECONCILING = 2,    /* Comparing dnsmasq state vs lease_db */
-  STARTUP_PHASE_COMPLETE = 3        /* Reconciliation complete */
+  STARTUP_PHASE_COMPLETE = 2        /* Sync wait over, startup complete */
 };
 
 struct lease_entry
@@ -269,10 +268,9 @@ struct daemon_state
   /* Running state */
   time_t start_time;
 
-  /* Startup reconciliation */
+  /* Startup phase */
   enum startup_phase startup_phase;
   time_t startup_sync_request_time;
-  bool reconciliation_in_progress;  /* True during startup reconciliation - skip broadcasts */
 
   /* Statistics */
   uint64_t total_leases_added;
@@ -285,9 +283,6 @@ struct daemon_state
   /* Retry queue statistics */
   uint64_t total_injection_retries;
   uint64_t total_injection_drops;
-
-  /* Reconciliation statistics */
-  uint64_t total_leases_reconciled;
 
   /* Retry queue */
   struct retry_queue retry_queue;

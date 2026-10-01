@@ -51,7 +51,7 @@ static struct uloop_timeout sync_request_timer;
 static struct uloop_timeout peer_check_timer;
 static struct uloop_timeout retry_timer;
 static struct uloop_timeout stats_timer;
-static struct uloop_timeout reconcile_timer;
+static struct uloop_timeout startup_timer;
 
 static void print_usage(const char *prog)
 {
@@ -247,115 +247,38 @@ static void daemon_cleanup(void)
 }
 
 /*
- * Startup Reconciliation
+ * Startup completion
  *
- * After receiving sync responses from peers, compare dnsmasq's
- * current leases with our synchronized lease_db. Any lease in
- * dnsmasq that is NOT in lease_db is stale and must be deleted.
- *
- * This handles the scenario where a node was down while leases
- * were deleted from the cluster.
- *
- * IMPORTANT: We cannot call ubus_invoke (delete_lease) during the
- * get_leases callback because nested ubus_invoke corrupts the blob
- * iteration. Instead, we collect stale IPs during iteration and
- * delete them afterwards.
+ * After the startup sync wait, count the dnsmasq leases missing from
+ * lease_db. They stay in dnsmasq, untracked, and are announced to
+ * peers on their next DHCP event.
  */
 
-/* Maximum number of stale leases to track during reconciliation */
-#define MAX_STALE_LEASES 256
-
-struct reconcile_ctx
-{
-  char stale_ips[MAX_STALE_LEASES][64];
-  char stale_macs[MAX_STALE_LEASES][32];
-  int count;
-  int total;
-};
-
-static void reconcile_callback(const char *ip, const char *mac,
+static void count_untracked_cb(const char *ip, const char *mac,
                                const char *hostname, time_t expires,
                                void *user_data)
 {
-  struct reconcile_ctx *ctx = (struct reconcile_ctx *)user_data;
-  struct lease_entry *existing;
+  int *untracked = (int *)user_data;
 
+  (void)mac;
   (void)hostname;
   (void)expires;
 
-  ctx->total++;
-
-  /* Check if this dnsmasq lease exists in our synchronized database */
-  existing = lease_db_find(ip);
-
-  if (existing == NULL)
-    {
-      /* Lease in dnsmasq but NOT in cluster = STALE
-       * Store for deletion after iteration completes */
-      if (ctx->count < MAX_STALE_LEASES)
-        {
-          strncpy(ctx->stale_ips[ctx->count], ip, 63);
-          ctx->stale_ips[ctx->count][63] = '\0';
-          strncpy(ctx->stale_macs[ctx->count], mac ? mac : "", 31);
-          ctx->stale_macs[ctx->count][31] = '\0';
-          ctx->count++;
-        }
-      else
-        {
-          log_warning("Too many stale leases, skipping %s", ip);
-        }
-    }
+  if (lease_db_find(ip) == NULL)
+    (*untracked)++;
 }
 
-static int startup_reconcile_leases(void)
+static void startup_complete(void)
 {
-  struct reconcile_ctx ctx = { .count = 0, .total = 0 };
+  int untracked = 0;
   int dnsmasq_count;
-  int deleted = 0;
-  int i;
 
-  log_info("Starting lease reconciliation (startup reconciliation)");
-
-  dnsmasq_count = ubus_handler_get_leases(reconcile_callback, &ctx);
-
-  if (dnsmasq_count < 0)
-    {
-      log_error("Failed to query dnsmasq leases for reconciliation");
-      /* Mark reconciliation complete anyway - we'll try again on next restart */
-      g_state->startup_phase = STARTUP_PHASE_COMPLETE;
-      return -1;
-    }
-
-  /* Now delete all stale leases (after iteration is complete)
-   * IMPORTANT: Set reconciliation_in_progress flag to prevent broadcasting
-   * these deletes to peers. startup reconciliation deletes are local reconciliation, not
-   * cluster-wide actions. */
-  g_state->reconciliation_in_progress = true;
-
-  for (i = 0; i < ctx.count; i++)
-    {
-      log_info("Reconciliation: deleting stale lease %s (mac=%s)",
-               ctx.stale_ips[i], ctx.stale_macs[i]);
-
-      if (ubus_handler_delete_lease(ctx.stale_ips[i]) == 0)
-        {
-          deleted++;
-          g_state->total_leases_reconciled++;
-        }
-      else
-        {
-          log_warning("Failed to delete stale lease %s", ctx.stale_ips[i]);
-        }
-    }
-
-  g_state->reconciliation_in_progress = false;
-
-  log_info("Reconciliation complete: %d leases in dnsmasq, %d stale leases deleted",
-           ctx.total, deleted);
-
+  dnsmasq_count = ubus_handler_get_leases(count_untracked_cb, &untracked);
   g_state->startup_phase = STARTUP_PHASE_COMPLETE;
 
-  return deleted;
+  if (dnsmasq_count >= 0)
+    log_info("Startup complete: %d leases in dnsmasq, %d untracked",
+             dnsmasq_count, untracked);
 }
 
 /* uloop callback: UDP sync socket is readable */
@@ -401,7 +324,7 @@ static void stats_cb(struct uloop_timeout *t)
   log_info("Statistics: leases=%d (local=%d, peer=%d), "
            "added=%llu, updated=%llu, deleted=%llu, "
            "sent=%llu, recv=%llu, conflicts=%llu, "
-           "retry_queue=%d, retries=%llu, drops=%llu, reconciled=%llu",
+           "retry_queue=%d, retries=%llu, drops=%llu",
            g_state->lease_count,
            g_state->local_lease_count,
            g_state->peer_lease_count,
@@ -413,21 +336,17 @@ static void stats_cb(struct uloop_timeout *t)
            (unsigned long long)g_state->total_conflicts_resolved,
            retry_queue_count(),
            (unsigned long long)g_state->total_injection_retries,
-           (unsigned long long)g_state->total_injection_drops,
-           (unsigned long long)g_state->total_leases_reconciled);
+           (unsigned long long)g_state->total_injection_drops);
   uloop_timeout_set(t, 300 * 1000);
 }
 
-/* One-shot: startup reconciliation after sync wait */
-static void reconcile_cb(struct uloop_timeout *t)
+/* One-shot: end of the startup sync wait */
+static void startup_timer_cb(struct uloop_timeout *t)
 {
   (void)t;
 
   if (g_state->startup_phase == STARTUP_PHASE_SYNC_REQUESTED)
-    {
-      g_state->startup_phase = STARTUP_PHASE_RECONCILING;
-      startup_reconcile_leases();
-    }
+    startup_complete();
 }
 
 static void main_loop(void)
@@ -437,7 +356,7 @@ static void main_loop(void)
   /* Request full sync from peers on startup */
   peer_sync_request_full_sync();
 
-  /* Initialize startup reconciliation phase tracking */
+  /* Startup phase lasts until the sync wait is over */
   g_state->startup_phase = STARTUP_PHASE_SYNC_REQUESTED;
   g_state->startup_sync_request_time = time(NULL);
 
@@ -472,9 +391,9 @@ static void main_loop(void)
   stats_timer.cb = stats_cb;
   uloop_timeout_set(&stats_timer, 300 * 1000);
 
-  /* One-shot: startup reconciliation after STARTUP_SYNC_WAIT_SECONDS */
-  reconcile_timer.cb = reconcile_cb;
-  uloop_timeout_set(&reconcile_timer, STARTUP_SYNC_WAIT_SECONDS * 1000);
+  /* One-shot: complete startup after STARTUP_SYNC_WAIT_SECONDS */
+  startup_timer.cb = startup_timer_cb;
+  uloop_timeout_set(&startup_timer, STARTUP_SYNC_WAIT_SECONDS * 1000);
 
   /* Run event loop (handles SIGTERM/SIGINT) */
   uloop_run();

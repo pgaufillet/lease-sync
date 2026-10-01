@@ -16,6 +16,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a lease dnsmasq had given out again for that address in the meantime,
   and that deletion was broadcast to the peers. Otherwise the deletion was
   counted as a drop.
+- **Correctness**: startup reconciliation no longer deletes dnsmasq leases
+  that no peer reported during the startup sync wait. A peer that was
+  down, used another PSK, lost its reply or had just restarted made a
+  restarting lease-sync wipe the local leases, and the resulting "del"
+  events were broadcast as `DELETE`s that a healthy peer applied. Such
+  leases now stay in dnsmasq, untracked, and are announced at their next
+  DHCP event; a lease deleted in the cluster while lease-sync was
+  restarting stays reserved in dnsmasq until it expires. The `reconciled`
+  field of the statistics log line is removed.
+
+### Changed
+- Startup log lines: "Starting lease reconciliation (startup
+  reconciliation)" and "Failed to query dnsmasq leases for
+  reconciliation" are dropped, and "Reconciliation complete: N leases in
+  dnsmasq, N stale leases deleted" becomes "Startup complete: N leases in
+  dnsmasq, N untracked".
 
 ### Validated
 - New sync flow suite (`tests/run-sync-flow-tests.sh`) runs the daemon's

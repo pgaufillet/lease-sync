@@ -75,8 +75,11 @@ peer_timeout=120
 #
 # NOTE: lease-sync keeps the replicated lease database in memory only.
 # After a daemon restart, state is rebuilt from peers via SYNC_REQUEST.
-# If all peers restart simultaneously, replicated state is lost until new
-# DHCP events occur. (Disk persistence may return in a future version.)
+# Leases held by the local dnsmasq that no peer reports are kept, and
+# advertised to peers at their next DHCP event (renewal, release). If all
+# peers restart simultaneously, dnsmasq keeps its leases but replicated
+# state is lost until new DHCP events occur. (Disk persistence may return
+# in a future version.)
 
 # Path to node ID file
 # Default: /var/lib/lease-sync/node_id (or /etc/lease-sync/node_id on OpenWrt)

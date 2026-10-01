@@ -23,7 +23,8 @@
  * retry-queue.c are linked) against:
  *   - a fake dnsmasq behind ubus_invoke, mirroring the add_lease /
  *     delete_lease / get_leases semantics of the dnsmasq ubus patch
- *     (add overwrites by IP, deleting an absent lease is NOT_FOUND);
+ *     (add overwrites by IP, deleting an absent lease is NOT_FOUND),
+ *     whose lease events are delivered to the daemon's event handler;
  *   - a fake peer on a loopback UDP socket (plain mode) that sends sync
  *     messages to the daemon and records what the daemon sends back.
  */
@@ -282,6 +283,31 @@ int uloop_timeout_set(struct uloop_timeout *timeout, int msecs)
     return 0;
 }
 
+/* Lease event, as dhcp-script-ha.sh publishes it on ubus */
+static void fake_event(const char *action, const char *ip, const char *mac)
+{
+    static struct blob_buf b;
+
+    blob_buf_init(&b, 0);
+    blobmsg_add_string(&b, "action", action);
+    blobmsg_add_string(&b, "ip", ip);
+    if (mac)
+        blobmsg_add_string(&b, "mac", mac);
+    blobmsg_add_u32(&b, "expires", (uint32_t)(time(NULL) + 3600));
+    blobmsg_add_u32(&b, "lease_length", 3600);
+    handle_lease_event(NULL, NULL, "dhcp.lease", b.head);
+}
+
+/* "del" events dnsmasq emits, asynchronously, for the leases removed
+ * through delete_lease */
+static void fake_deliver_del_events(void)
+{
+    int i;
+
+    for (i = 0; i < fake_deleted_count; i++)
+        fake_event("del", fake_deleted[i].ip, fake_deleted[i].mac);
+}
+
 /* ============================================
  * Fake peer (loopback UDP, plain mode)
  * ============================================ */
@@ -443,6 +469,98 @@ static void teardown(void)
 }
 
 /* ============================================
+ * Startup reconciliation
+ * ============================================ */
+static void test_startup_keeps_unreported_leases(void)
+{
+    printf("\n=== Test: startup without peer answer keeps dnsmasq leases ===\n");
+    reset_state();
+
+    fake_put("10.0.0.70", "02:00:00:00:00:70", 3600);
+    fake_put("10.0.0.71", "02:00:00:00:00:71", 3600);
+
+    startup_timer_cb(&startup_timer);
+
+    ASSERT_EQ_INT("startup completes", g_state->startup_phase, STARTUP_PHASE_COMPLETE);
+    ASSERT_EQ_INT("dnsmasq was not asked to delete", fake_delete_calls, 0);
+    ASSERT_TRUE("first lease still in dnsmasq", fake_find("10.0.0.70") >= 0);
+    ASSERT_TRUE("second lease still in dnsmasq", fake_find("10.0.0.71") >= 0);
+}
+
+static void test_startup_sends_no_delete(void)
+{
+    struct peer_rx rx;
+
+    printf("\n=== Test: startup without peer answer sends no DELETE ===\n");
+    reset_state();
+
+    fake_put("10.0.0.72", "02:00:00:00:00:72", 3600);
+    fake_put("10.0.0.73", "02:00:00:00:00:73", 3600);
+
+    startup_timer_cb(&startup_timer);
+    fake_deliver_del_events();
+    peer_drain(&rx);
+
+    ASSERT_EQ_INT("peer received no DELETE", rx.deletes, 0);
+}
+
+static void test_untracked_lease_announced_on_renewal(void)
+{
+    struct peer_rx rx;
+
+    printf("\n=== Test: untracked lease is announced at its renewal ===\n");
+    reset_state();
+
+    fake_put("10.0.0.74", "02:00:00:00:00:74", 3600);
+    startup_timer_cb(&startup_timer);
+    peer_drain(NULL);
+
+    fake_event("old", "10.0.0.74", "02:00:00:00:00:74");
+    peer_drain(&rx);
+
+    ASSERT_EQ_INT("renewal is announced to the peer", rx.adds_updates, 1);
+    ASSERT_NOT_NULL("renewed lease is tracked", lease_db_find("10.0.0.74"));
+}
+
+static void test_startup_old_event_not_announced(void)
+{
+    struct peer_rx rx;
+
+    printf("\n=== Test: startup 'old' event for an untracked lease ===\n");
+    reset_state();
+
+    fake_put("10.0.0.75", "02:00:00:00:00:75", 3600);
+    fake_event("old", "10.0.0.75", "02:00:00:00:00:75");
+    peer_drain(&rx);
+
+    ASSERT_EQ_INT("lease is not announced", rx.adds_updates, 0);
+    ASSERT_NULL("lease is not tracked", lease_db_find("10.0.0.75"));
+}
+
+static void test_startup_old_event_for_tracked_lease(void)
+{
+    struct peer_rx rx;
+    struct lease_entry *e;
+
+    printf("\n=== Test: startup 'old' event for a lease a peer reported ===\n");
+    reset_state();
+
+    peer_send(SYNC_ACTION_ADD, "10.0.0.76", "02:00:00:00:00:76",
+              get_timestamp_ms() - 1000, 0);
+    peer_drain(NULL);
+    ASSERT_TRUE("peer lease injected into dnsmasq", fake_find("10.0.0.76") >= 0);
+
+    fake_event("old", "10.0.0.76", "02:00:00:00:00:76");
+    peer_drain(&rx);
+
+    ASSERT_EQ_INT("lease is announced", rx.adds_updates, 1);
+    e = lease_db_find("10.0.0.76");
+    ASSERT_NOT_NULL("lease is tracked", e);
+    if (e)
+        ASSERT_EQ_STR("lease_db takes the local event", e->source_node, NODE_ID);
+}
+
+/* ============================================
  * Deleting a lease dnsmasq does not hold
  * ============================================ */
 static void test_peer_delete_absent_lease_not_retried(void)
@@ -513,6 +631,11 @@ int main(void)
         return 1;
     }
 
+    test_startup_keeps_unreported_leases();
+    test_startup_sends_no_delete();
+    test_untracked_lease_announced_on_renewal();
+    test_startup_old_event_not_announced();
+    test_startup_old_event_for_tracked_lease();
     test_peer_delete_absent_lease_not_retried();
     test_retry_of_absent_delete_succeeds();
     test_delete_failures_still_retried();

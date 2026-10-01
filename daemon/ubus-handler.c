@@ -74,17 +74,8 @@ static void handle_lease_event(struct ubus_context *ctx, struct ubus_event_handl
 
   log_debug("Received ubus event: %s - %s %s", type, action, ip);
 
-  /* startup reconciliation FIX: Skip "old" events during startup reconciliation phase.
-   *
-   * Problem: When dnsmasq starts, it reads leases from dhcp.leases and emits
-   * "old" events for each one. If we add these to lease_db, startup reconciliation can't
-   * distinguish between peer-synced leases (valid) and local stale leases.
-   *
-   * Solution: During startup (before startup reconciliation completes), only process "old" events
-   * that are already in our database (from peer SYNC_RESPONSE). This ensures
-   * startup reconciliation correctly identifies stale leases as "in dnsmasq but not in cluster".
-   *
-   * After startup completes, "old" events are processed normally for renewals.
+  /* Lease file replay: skip leases no peer reported, they may have been
+   * deleted while lease-sync was stopped
    */
   if (strcmp(action, "old") == 0 &&
       g_state->startup_phase < STARTUP_PHASE_COMPLETE)
@@ -107,6 +98,7 @@ static void handle_lease_event(struct ubus_context *ctx, struct ubus_event_handl
        * the original lease was created. */
       uint64_t expected_ts = 0;
       struct lease_entry *existing = lease_db_find(ip);
+      struct lease_entry entry;
 
       if (existing)
         {
@@ -118,31 +110,20 @@ static void handle_lease_event(struct ubus_context *ctx, struct ubus_event_handl
       /* Delete from local database */
       lease_db_delete(ip);
 
-      /* Broadcast DELETE to peers with expected_ts (causality tracking)
-       * SKIP broadcast during startup reconciliation reconciliation - those deletes are local
-       * cleanup, not cluster-wide actions. */
-      if (!g_state->reconciliation_in_progress)
+      /* Broadcast DELETE to peers with expected_ts (causality tracking) */
+      memset(&entry, 0, sizeof(entry));
+
+      /* Parse IP address to set af_family and binary address */
+      if (parse_ip_address(ip, &entry.af_family, &entry.addr) < 0)
         {
-          struct lease_entry entry;
-
-          memset(&entry, 0, sizeof(entry));
-
-          /* Parse IP address to set af_family and binary address */
-          if (parse_ip_address(ip, &entry.af_family, &entry.addr) < 0)
-            {
-              log_error("Invalid IP address in delete event: %s", ip);
-              return;
-            }
-          strncpy(entry.ip_str, ip, sizeof(entry.ip_str) - 1);
-          strncpy(entry.source_node, g_state->config.node_id, MAX_NODE_ID_LEN - 1);
-          entry.timestamp_ms = get_timestamp_ms();
-
-          peer_sync_broadcast_delete(&entry, expected_ts);
+          log_error("Invalid IP address in delete event: %s", ip);
+          return;
         }
-      else
-        {
-          log_debug("Skipping DELETE broadcast for %s (startup reconciliation reconciliation)", ip);
-        }
+      strncpy(entry.ip_str, ip, sizeof(entry.ip_str) - 1);
+      strncpy(entry.source_node, g_state->config.node_id, MAX_NODE_ID_LEN - 1);
+      entry.timestamp_ms = get_timestamp_ms();
+
+      peer_sync_broadcast_delete(&entry, expected_ts);
 
       log_info("Deleted local lease: %s (expected_ts=%llu)",
                ip, (unsigned long long)expected_ts);
