@@ -76,7 +76,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is rebuilt from peers via `SYNC_REQUEST` (existing behavior). If both nodes
   restart simultaneously, replicated state is lost until new DHCP events occur
   — this is now documented in `daemon/lease-sync.conf.example`. The legacy
-  keys are silently ignored if present in older configuration files.
+  keys are ignored if present in older configuration files, with an
+  "Unknown config key" warning.
 
 ### Changed
 - Internal API: `format_mac(const unsigned char *, int, char *, size_t)` and
