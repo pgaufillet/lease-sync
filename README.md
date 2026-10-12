@@ -140,26 +140,33 @@ The following limits are compile-time constants defined in `daemon/common.h`:
 
 lease-sync requires dnsmasq with ubus support (`add_lease`, `delete_lease` methods).
 
-**Note on Init Scripts:** This directory includes a standalone `files/lease-sync.init` script for generic OpenWrt deployments. If you're using the ha-cluster package from `openwrt-ha-feed`, a different UCI-integrated init script is used instead. The standalone version is intended for upstream contribution and manual installations.
+**Init scripts:** `files/lease-sync.init` is a minimal procd script for manual installations: it runs the daemon on `/etc/lease-sync/config`. The OpenWrt package from [openwrt-ha-feed](https://github.com/pgaufillet/openwrt-ha-feed) ships its own init script, which generates that file from `/etc/config/lease-sync`.
 
-### OpenWrt with dnsmasq-ha Package (Recommended)
+### OpenWrt Package
 
-When using the `dnsmasq-ha` package, integration is automatic via hotplug:
+The `lease-sync` package depends on `dnsmasq-ha` and installs a hotplug script (`/etc/hotplug.d/dhcp/50-lease-sync`) that publishes DHCP events to ubus.
 
-1. Install packages:
+1. Install `dnsmasq-ha` in place of the stock `dnsmasq`, then `lease-sync` (see the openwrt-ha-feed README for the swap):
    ```bash
-   opkg install dnsmasq-ha lease-sync
+   apk add lease-sync
    ```
 
-2. Configure `/etc/lease-sync/config` with peer addresses and encryption key
+2. In `/etc/config/lease-sync`, set `option enabled '1'`, the peers (`list peer`) and `psk_key`. The init script regenerates `/etc/lease-sync/config` from it at each start.
 
-3. Start services:
+3. Start the service:
    ```bash
    /etc/init.d/lease-sync enable
    /etc/init.d/lease-sync start
    ```
 
-The hotplug script (`/etc/hotplug.d/dhcp/50-lease-sync`) automatically publishes DHCP events to ubus.
+### With ha-cluster
+
+ha-cluster runs lease-sync itself, from its own settings in `/etc/config/ha-cluster`; `/etc/config/lease-sync` is not read. While ha-cluster runs, the `lease-sync` service is stopped and disabled, and its previous state is restored when ha-cluster stops.
+
+lease-sync runs when `option lease_sync '1'` is set in the `config global 'config'` section and at least one peer has an address and is not `vrrp_only`, whatever the owsync sync groups. ha-cluster then:
+
+- generates `/tmp/ha-cluster/lease-sync.conf` (peers, `encryption_key`, `bind_address`, the `lease_sync_*` options of the `advanced` section) and runs lease-sync as an instance of its own procd service
+- drops an overlay enabling `script-on-renewal` into dnsmasq's conf-dir, restarting dnsmasq when the overlay changes
 
 ### Standalone Setup
 
