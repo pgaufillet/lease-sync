@@ -142,6 +142,8 @@ lease-sync requires dnsmasq with ubus support (`add_lease`, `delete_lease` metho
 
 dnsmasq must also run with `script-on-renewal`. Without it, dnsmasq runs no script when a client renews (RENEWING, REBINDING): the peers keep the original expiry time, their copy of the lease expires first, and the DELETE they then send removes the lease still in use on the serving node.
 
+lease-sync drives a single dnsmasq instance, the one registered on ubus as `dnsmasq`. On OpenWrt this is the first enabled `dnsmasq` section of `/etc/config/dhcp`; further sections register as `dnsmasq.<section>` and receive no synced lease. Keep a single enabled `dnsmasq` section per node.
+
 **Init scripts:** `files/lease-sync.init` is a minimal procd script for manual installations: it runs the daemon on `/etc/lease-sync/config`. The OpenWrt package from [openwrt-ha-feed](https://github.com/pgaufillet/openwrt-ha-feed) ships its own init script, which generates that file from `/etc/config/lease-sync`.
 
 ### OpenWrt Package
