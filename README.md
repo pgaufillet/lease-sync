@@ -140,6 +140,8 @@ The following limits are compile-time constants defined in `daemon/common.h`:
 
 lease-sync requires dnsmasq with ubus support (`add_lease`, `delete_lease` methods).
 
+dnsmasq must also run with `script-on-renewal`. Without it, dnsmasq runs no script when a client renews (RENEWING, REBINDING): the peers keep the original expiry time, their copy of the lease expires first, and the DELETE they then send removes the lease still in use on the serving node.
+
 **Init scripts:** `files/lease-sync.init` is a minimal procd script for manual installations: it runs the daemon on `/etc/lease-sync/config`. The OpenWrt package from [openwrt-ha-feed](https://github.com/pgaufillet/openwrt-ha-feed) ships its own init script, which generates that file from `/etc/config/lease-sync`.
 
 ### OpenWrt Package
@@ -153,10 +155,13 @@ The `lease-sync` package depends on `dnsmasq-ha` and installs a hotplug script (
 
 2. In `/etc/config/lease-sync`, set `option enabled '1'`, the peers (`list peer`) and `psk_key`. The init script regenerates `/etc/lease-sync/config` from it at each start.
 
-3. Start the service:
+3. Add `script-on-renewal` to `/etc/dnsmasq.conf`.
+
+4. Start the service and restart dnsmasq:
    ```bash
    /etc/init.d/lease-sync enable
    /etc/init.d/lease-sync start
+   /etc/init.d/dnsmasq restart
    ```
 
 ### With ha-cluster
@@ -186,6 +191,7 @@ The DHCP script bridges dnsmasq events to lease-sync: dnsmasq calls it on every 
    ```
    enable-ubus
    dhcp-script=/usr/lib/dnsmasq/dhcp-script-ha.sh
+   script-on-renewal
    ```
 
 3. **Configure firewall** to allow UDP port 5378 between peers

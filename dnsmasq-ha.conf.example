@@ -29,9 +29,10 @@ dhcp-script=/usr/lib/dnsmasq/dhcp-script-ha.sh
 # Optional: Run script as non-root user (recommended for security)
 # dhcp-scriptuser=nobody
 
-# Optional: Enable script on lease renewals and expiry changes
-# Useful for keeping peer nodes updated on lease extensions
-# script-on-renewal
+# Required: run the script on lease renewals too. Without it, peers keep
+# the original expiry, their copy expires first and the DELETE they send
+# removes the lease still in use on this node.
+script-on-renewal
 
 # ============================================
 # Optional: Read-only Lease File Mode
