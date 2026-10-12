@@ -230,7 +230,9 @@ lease-sync: Statistics: leases=42 (local=30, peer=12), added=50, updated=120, de
 1. Check daemon is running: `ps | grep lease-sync`
 2. Verify peer connectivity: `ping <peer-ip>`
 3. Check firewall allows UDP 5378
-4. Enable debug: `/usr/sbin/lease-sync -f -d`
+4. Enable debug logging: stop the service, run
+   `/usr/sbin/lease-sync -c /etc/lease-sync/config -d` and follow
+   `logread -f` (the daemon logs to syslog), or set `log_level=3`
 
 ### Conflicts Not Resolving
 

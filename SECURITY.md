@@ -68,7 +68,7 @@ If using plain mode with WireGuard instead of PSK encryption:
 
 1. **Install WireGuard:**
    ```bash
-   opkg install wireguard-tools kmod-wireguard
+   apk add wireguard-tools kmod-wireguard
    ```
 
 2. **Generate keys on each node:**
