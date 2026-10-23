@@ -142,7 +142,7 @@ lease-sync requires dnsmasq with ubus support (`add_lease`, `delete_lease` metho
 
 dnsmasq must also run with `script-on-renewal`. Without it, dnsmasq runs no script when a client renews (RENEWING, REBINDING): the peers keep the original expiry time, their copy of the lease expires first, and the DELETE they then send removes the lease still in use on the serving node.
 
-lease-sync drives a single dnsmasq instance, the one registered on ubus as `dnsmasq`. On OpenWrt this is the first enabled `dnsmasq` section of `/etc/config/dhcp`; further sections register as `dnsmasq.<section>` and receive no synced lease. Keep a single enabled `dnsmasq` section per node.
+lease-sync drives a single dnsmasq instance, the one registered on ubus as `dnsmasq`. On OpenWrt this is the first enabled `dnsmasq` section of `/etc/config/dhcp`; further sections register as `dnsmasq.<section>` and receive no synced lease, while their own leases are still sent to the peers, which inject them into their `dnsmasq` instance. Keep a single enabled `dnsmasq` section per node.
 
 **Init scripts:** `files/lease-sync.init` is a minimal procd script for manual installations: it runs the daemon on `/etc/lease-sync/config`. The OpenWrt package from [openwrt-ha-feed](https://github.com/pgaufillet/openwrt-ha-feed) ships its own init script, which generates that file from `/etc/config/lease-sync`.
 
@@ -172,7 +172,7 @@ ha-cluster runs lease-sync itself, from its own settings in `/etc/config/ha-clus
 
 lease-sync runs when `option lease_sync '1'` is set in the `config global 'config'` section and at least one peer has an address and is not `vrrp_only`, whatever the owsync sync groups. ha-cluster then:
 
-- generates `/tmp/ha-cluster/lease-sync.conf` (peers, `encryption_key`, `bind_address`, the `lease_sync_*` options of the `advanced` section) and runs lease-sync as an instance of its own procd service
+- generates `/tmp/ha-cluster/lease-sync.conf` from the peers, `encryption_key` (as `psk_key`), `bind_address` and the `lease_sync_*` options of the `advanced` section, and runs lease-sync as an instance of its own procd service
 - drops an overlay enabling `script-on-renewal` into dnsmasq's conf-dir, restarting dnsmasq when the overlay changes
 
 ### Standalone Setup
@@ -245,7 +245,7 @@ lease-sync: Statistics: leases=42 (local=30, peer=12), added=50, updated=120, de
 1. Check daemon is running: `ps | grep lease-sync`
 2. Verify peer connectivity: `ping <peer-ip>`
 3. Check firewall allows UDP 5378
-4. Enable debug logging: stop the service, run
+4. Enable debug logging: on a standalone setup, stop the service, run
    `/usr/sbin/lease-sync -c /etc/lease-sync/config -d` and follow
    `logread -f` (the daemon logs to syslog), or set `log_level=3` in the
    config file. On OpenWrt the init script regenerates that file: set
