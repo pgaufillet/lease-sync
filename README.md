@@ -248,9 +248,10 @@ lease-sync: Statistics: leases=42 (local=30, peer=12), added=50, updated=120, de
 4. Enable debug logging: on a standalone setup, stop the service, run
    `/usr/sbin/lease-sync -c /etc/lease-sync/config -d` and follow
    `logread -f` (the daemon logs to syslog), or set `log_level=3` in the
-   config file. On OpenWrt the init script regenerates that file: set
-   `option log_level '3'` in `/etc/config/lease-sync` instead, or
-   `lease_sync_log_level` in ha-cluster's `advanced` section.
+   config file (on OpenWrt, `option log_level '3'` in
+   `/etc/config/lease-sync`: the init script regenerates the config
+   file). Under ha-cluster, set `lease_sync_log_level '3'` in its
+   `advanced` section; `/etc/config/lease-sync` is not read.
 
 ### Conflicts Not Resolving
 
